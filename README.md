@@ -253,17 +253,45 @@ Add a new record to `RAW.airport_comments`. Then materialize the incremental mod
 Add your solution in the next lines:
 * Adding a new record:
   ```
-  REPLACE THIS CODE BLOCK BY PASTING THE SQL for adding a new record to `RAW.airport_comments`
+  INSERT INTO AIRSTATS.RAW.AIRPORT_COMMENTS (
+    id,
+    thread_ref,
+    airport_ref,
+    airport_ident,
+    date,
+    member_nickname,
+    subject,
+    body,
+    loaded_at
+   )
+   VALUES (
+       602622,
+       82705,
+       523204,
+       'WIBL',
+       current_timestamp,
+       'alex89',
+       'Interesting airport',
+       'Only few restaurants but they are quite good',
+       current_timestamp
+   );
+
   ```
 * Command to execute to update this model (but only this model, not all the models):
   ```
-  REPLACE THIS CODE BLOCK BY PASTING THE dbt COMMAND YOU EXECUTED
+  dbt run -s silver_airport_comments
   ``` 
 * Execute an SQL on the Snowflake UI to ensure the new record has been added:
+
+  SQL
   ```
-  REPLACE THIS CODE BLOCK BY PASTING 
-  1) THE SQL to extract the new record from `silver_airport_comments`
-  2) THE result you see in Snowflake
+  SELECT * FROM AIRSTATS.DEV.SILVER_AIRPORT_COMMENTS
+  WHERE COMMENT_ID = 602622
+  ```
+  Output
+  ```
+   COMMENT_ID	AIRPORT_IDENT	COMMENT_TIMESTAMP	MEMBER_NICKNAME	COMMENT_SUBJECT	COMMENT_BODY	LOADED_AT
+   602622	WIBL	2026-08-12 22:32:55.793	alex89	Interesting airport	Only few restaurants but they are quite good	2026-08-12 22:42:25.219 -0700
   ``` 
 
 **Requirements** 
@@ -281,16 +309,32 @@ The airport `Los Angeles County Sheriff's Department Heliport` (airport_ident: `
 
 * Updating the record to "closed":
   ```
-  REPLACE THIS BLOCK BY PASTING THE SQL you executed
+   UPDATE AIRSTATS.DEV.SILVER_AIRPORTS
+   SET AIRPORT_TYPE = 'closed'
+   WHERE AIRPORT_IDENT = '01CN';
   ```
 * Command to execute and snapshot update:
   ```
-  REPLACE THIS CODE BLOCK BY PASTING THE dbt COMMAND YOU EXECUTED
+  dbt snapshot
+  ```
+  Validation snapshot in Snowflake
+  ```  
+   AIRPORT_IDENT	AIRPORT_TYPE	AIRPORT_NAME	AIRPORT_LAT	AIRPORT_LONG	CONTINENT	ISO_COUNTRY	ISO_REGION	DBT_SCD_ID	DBT_UPDATED_AT	DBT_VALID_FROM	DBT_VALID_TO
+   01CN	closed	Los Angeles County Sheriff's Department Heliport	34.037799835	-118.153999329	NA	US	US-CA	1df1c371cca24c6e1e85bdf33c4920b7	2026-08-14 06:19:28.581	2026-08-14 06:19:28.581	
+   01CN	heliport	Los Angeles County Sheriff's Department Heliport	34.037799835	-118.153999329	NA	US	US-CA	52424eecaf46484e3aba0ca82a4459f7	2026-08-14 06:02:02.187	2026-08-14 06:02:02.187	2026-08-14 06:19:28.581
   ``` 
 
 #### Analyses
 * Create `analyses/la_heliport_closed.sql` where you validate if the snapshot went through - select every line corresponding to this airport in the snapshot table.
 * Execute the analysis and print the values to screen
+
+dbt show -s la_heliport_closed
+
+Previewing node 'la_heliport_closed':
+| AIRPORT_IDENT | AIRPORT_TYPE | AIRPORT_NAME         | AIRPORT_LAT | AIRPORT_LONG | CONTINENT | ... |
+| ------------- | ------------ | -------------------- | ----------- | ------------ | --------- | --- |
+| 01CN          | closed       | Los Angeles Count... |     34.038… |    -118.154… | NA        | ... |
+| 01CN          | heliport     | Los Angeles Count... |     34.038… |    -118.154… | NA        | ... |
 
 ### Exercise 10: Snapshot on silver_runways
 * Create a snapshot for `silver_runways`, call it `scd_silver_runways`. Use the same check strategy as for `scd_silver_airports`.
@@ -305,8 +349,165 @@ Implement the following:
 * Implement two singular tests
 * Add configuration to store test failures into a database table
 
+```
+schema.yml
+models:
+  - name: silver_airport_comments
+    description: table which contains comments about airports.
+    tests:
+      - dbt_expectations.expect_table_column_count_to_equal:
+          value: 7
+    columns:
+      - name: comment_id
+        description: Primary key for comments table.
+        data_tests:
+          - unique
+          - not_null
+          - dbt_expectations.expect_column_to_exist
+      - name: airport_ident
+        description: The unique identifier for the airport associated with the comment.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('silver_airports')
+                field: airport_ident
+              severity: warn
+          - dbt_expectations.expect_column_to_exist
+      - name: comment_timestamp
+        description: The timestamp of when the comment was made.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_to_exist
+      - name: member_nickname
+        description: The nickname of the member who made the comment.
+        data_tests:
+          - not_null
+      - name: comment_subject
+        description: The subject of the comment.
+        data_tests:
+          - dbt_expectations.expect_column_value_lengths_to_be_between:
+              min_value: 0 # (Optional)
+              max_value: 100 # (Optional)
+              strictly: false # (Optional. Default is 'false'. Adds an 'or equal to' to the comparison operator
+      - name: comment_body
+        description: The body of the comment.
+        data_tests:
+          - dbt_expectations.expect_column_value_lengths_to_be_between:
+              min_value: 0 # (Optional)
+              max_value: 10000 # (Optional)
+              strictly: false
+              severity: warn
+  - name: silver_airports
+    description: table which contains information about airports.
+    tests:
+      - dbt_expectations.expect_table_column_count_to_equal:
+          value: 8
+    columns:
+      - name: airport_ident
+        description: The unique identifier for the airport.
+        data_tests:
+          - unique
+          - not_null
+          - dbt_expectations.expect_column_to_exist
+      - name: airport_type
+        description: The type of the airport (e.g., small_airport, medium_airport, large_airport).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['small_airport', 
+                         'seaplane_base',
+                          'balloonport',
+                          'heliport',
+                          'medium_airport', 
+                          'large_airport',
+                          'closed']
+          - dbt_expectations.expect_column_to_exist
+      - name: airport_name
+        description: The name of the airport.
+        data_tests:
+          - not_null
+      - name: iso_country
+        description: The country where the airport is located.
+        data_tests:
+          - not_null
+  
+  - name: silver_runways
+    description: table which contains information about runways.
+    tests:
+      - dbt_expectations.expect_table_column_count_to_equal:
+          value: 7
+    columns:
+      - name: runway_id
+        description: The unique identifier for the runway.
+        data_tests:
+          - unique
+          - not_null
+          - dbt_expectations.expect_column_to_exist
+      - name: airport_ident
+        description: The identifier of the airport where the runway is located.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('silver_airports')
+                field: airport_ident
+              severity: warn
+          - dbt_expectations.expect_column_to_exist     
+      - name: runway_surface
+        description: The surface type of the runway (e.g., asphalt, concrete).
+        data_tests:
+          - not_null
+      - name: runway_lighted
+        description: Indicates whether the runway is lighted (1 for yes, 0 for no).
+        data_tests:
+          - not_null
+      - name: runway_closed
+        description: Indicates whether the runway is closed (1 for yes, 0 for no).
+        data_tests:
+          - not_null
+```
+
+Singular test consistent_loaded_at.sql
+```
+{# check if every comment was created before loading timestamp #}
+SELECT * FROM {{ ref('silver_airport_comments') }}
+WHERE comment_timestamp > loaded_at
+```
+
+Singular test runways_source_quality.sql
+```
+{# check if airport_ref is a reliable identificator #}
+SELECT
+    l.ID AS AIRPORT_ID,
+    r.ID AS RUNWAY_ID,
+    l.IDENT,
+    r.AIRPORT_IDENT,
+    r.AIRPORT_REF
+FROM AIRSTATS.RAW.AIRPORTS l
+INNER JOIN AIRSTATS.RAW.RUNWAYS r
+    ON l.ID = r.AIRPORT_REF
+WHERE l.IDENT <> r.AIRPORT_IDENT
+```
 
 ## Part 9: Documentation
 * Add descriptions to the silver tables and their columns
 * Use a '{{ doc("...") }}'-based documentation at least once
 * Create an overview.md where you discuss in a few sentences how the silver tables interconnect
+
+overview.md
+```
+{% docs __overview__ %}
+# Airstats pipeline
+Hey, welcome to our Airstats pipeline documentation!
+There are 3 silver tables:
+- silver_airport_comments
+- silver_airports
+- silver_runways
+
+silver airports has airport_ident as unique identifier
+both silver_comments and silver_runways have as foreign key airport_ident from silver_airports
+
+
+{% enddocs %}
+```
